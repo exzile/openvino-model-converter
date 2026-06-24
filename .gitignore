@@ -1,0 +1,21 @@
+# venvs (recreate with scripts/Setup-Venvs.ps1)
+venvs/
+*.venv/
+
+# converted IRs + downloaded sources + scratch (large; never commit)
+model-repo/
+*.bin
+*.safetensors
+*.gguf
+_src_*/
+_work_*/
+
+# python
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+
+# logs / scratch
+*.log
+ov.zip

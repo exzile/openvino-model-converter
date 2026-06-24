@@ -1,0 +1,11 @@
+openvino-model-converter
+Copyright 2026 exzile
+
+This product wraps and depends on third-party software:
+  - OpenVINO and optimum-intel (Apache-2.0), Intel Corporation
+  - Hugging Face optimum, transformers, huggingface_hub (Apache-2.0)
+  - NNCF (Apache-2.0), Intel Corporation
+  - PyTorch (BSD-3-Clause)
+
+Models converted with this tool remain subject to their original licenses.
+This tool does not grant any rights to the model weights it processes.

@@ -1,0 +1,18 @@
+# Pinned conversion stack (identical across both venvs; only transformers differs).
+# Use scripts/Setup-Venvs.ps1 to build the matched venvs — it installs this stack
+# and then force-pins transformers per venv (5.12.1 standard / 5.2.0 qwen35) with
+# --no-deps, because optimum-intel 2.0.0 declares transformers<5.1 in metadata
+# while its code supports newer (see docs/version-matching.md).
+optimum==2.2.0
+optimum-intel==2.0.0
+openvino==2026.2.1
+openvino-tokenizers==2026.2.1.0
+nncf==3.2.0
+torch==2.12.1
+accelerate==1.14.0
+safetensors==0.7.0
+huggingface-hub
+
+# transformers is installed separately, per venv:
+#   venv-standard : transformers==5.12.1
+#   venv-qwen35   : transformers==5.2.0
