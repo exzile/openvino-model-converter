@@ -90,9 +90,12 @@ two missing pieces — a model-agnostic `graph.pbtxt` and a `simplified_chat_tem
 in the tokenizer's `rt_info` (which OVMS reads for `/chat/completions`). Set the
 device with `--ovms-device GPU|CPU|NPU`, or skip the step with `--no-ovms-finalize`.
 
-> Caveat: OpenVINO GenAI 2026.2 can't load chat templates for some tri-modal/omni
+> Caveat: OVMS's `_python_on` builds can't load chat templates for some tri-modal/omni
 > tokenizers (e.g. `qwen3_5` omni). Those IRs still serve via `/v3/completions`;
-> only `/chat/completions` is affected. See [docs/version-matching.md](docs/version-matching.md#5-serving-on-openvino-model-server-ovms).
+> only `/chat/completions` is affected (upstream: openvinotoolkit/model_server#4322).
+> See [docs/version-matching.md](docs/version-matching.md#5-serving-on-openvino-model-server-ovms).
+> Until the upstream fix ships, **[serve/ov-chat-proxy.py](serve/README.md)** bridges
+> `/chat/completions` by applying the template itself and forwarding to `/completions`.
 
 ## Why two venvs?
 
