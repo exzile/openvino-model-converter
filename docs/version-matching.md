@@ -96,3 +96,32 @@ shape:
 For Qwythos this grafted 427/427 tensors cleanly. If your VL model's text decoder
 uses an unregistered `model_type` (e.g. `gemma4_unified_text`), the text export
 will still need an optimum config for that type — extraction alone isn't enough.
+
+## 5. Serving on OpenVINO Model Server (OVMS)
+
+optimum produces a loadable IR, but **not** an OVMS-servable one. Two extra pieces
+are needed; the tool writes both in a `finalize_for_ovms` step (skip with
+`--no-ovms-finalize`):
+
+- **`graph.pbtxt`** — OVMS serves an LLM through a MediaPipe graph. optimum doesn't
+  emit one. The tool writes a model-agnostic graph (`models_path: "./"`); set the
+  device with `--ovms-device GPU|CPU|NPU`.
+- **`simplified_chat_template`** — OVMS reads the chat template from the
+  **`openvino_tokenizer.xml` IR's `rt_info`** (not `tokenizer_config.json`, not a
+  standalone `chat_template.jinja`) and needs a `simplified_chat_template` entry.
+  optimum only sets it for templates in its hardcoded `COMPLEX_CHAT_TEMPLATES`
+  list, so most self-converted IRs lack it and `/chat/completions` fails with
+  *"Chat template not loaded correctly"*. The tool sets it via the OV API
+  (`set_rt_info` + `save_model` to a temp path then replace — editing the `.xml`
+  text is ignored by the runtime, and saving in-place fails because it ties to the
+  source `.bin`).
+
+### Known limit: omni / tri-modal tokenizers
+
+OpenVINO **GenAI 2026.2** cannot load *any* chat template for some tri-modal
+(text+image+audio+video) tokenizers — e.g. `qwen3_5` omni models — regardless of
+the template. Proven by attaching a known-good template (one that works on a
+plain Qwen3 model) to the omni tokenizer: OVMS still reports the template won't
+load. The IR generates fine via `/v3/completions` (raw prompt, no template); only
+`/chat/completions` is affected. This is a GenAI-runtime limitation, not something
+the converter can fix — wait for upstream OVMS support, or format prompts caller-side.

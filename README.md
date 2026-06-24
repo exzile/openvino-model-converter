@@ -82,6 +82,18 @@ A valid IR has **both** `openvino_model.xml` and a non-trivial `openvino_model.b
 The engine checks this automatically. To verify INT4 by hand, grep the `.xml` for
 `element_type="i4"` (a full-precision IR has only `f16`/`f32`).
 
+## Serving on OpenVINO Model Server
+
+optimum produces a loadable IR but not an OVMS-servable one. For the text-serveable
+shapes (`text`, `decoder`) the tool runs a `finalize_for_ovms` step that adds the
+two missing pieces — a model-agnostic `graph.pbtxt` and a `simplified_chat_template`
+in the tokenizer's `rt_info` (which OVMS reads for `/chat/completions`). Set the
+device with `--ovms-device GPU|CPU|NPU`, or skip the step with `--no-ovms-finalize`.
+
+> Caveat: OpenVINO GenAI 2026.2 can't load chat templates for some tri-modal/omni
+> tokenizers (e.g. `qwen3_5` omni). Those IRs still serve via `/v3/completions`;
+> only `/chat/completions` is affected. See [docs/version-matching.md](docs/version-matching.md#5-serving-on-openvino-model-server-ovms).
+
 ## Why two venvs?
 
 optimum-intel's OpenVINO exporter has a per-model "model patcher" that imports

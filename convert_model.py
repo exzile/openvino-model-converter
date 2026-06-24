@@ -348,6 +348,100 @@ def validate_ir(out: Path) -> bool:
 
 
 # ----------------------------------------------------------------------------
+# OVMS finalize: make a text IR directly servable by OpenVINO Model Server
+# ----------------------------------------------------------------------------
+
+# Minimal, OVMS-parseable ChatML — used when the source has no chat template.
+_DEFAULT_CHATML = (
+    "{% for message in messages %}"
+    "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}{{'<|im_start|>assistant\n'}}{% endif %}"
+)
+
+_GRAPH_PBTXT = '''input_stream: "HTTP_REQUEST_PAYLOAD:input"
+output_stream: "HTTP_RESPONSE_PAYLOAD:output"
+node: {{
+  name: "LLMExecutor"
+  calculator: "HttpLLMCalculator"
+  input_stream: "LOOPBACK:loopback"
+  input_stream: "HTTP_REQUEST_PAYLOAD:input"
+  input_side_packet: "LLM_NODE_RESOURCES:llm"
+  output_stream: "LOOPBACK:loopback"
+  output_stream: "HTTP_RESPONSE_PAYLOAD:output"
+  input_stream_info: {{ tag_index: 'LOOPBACK:0' back_edge: true }}
+  node_options: {{
+    [type.googleapis.com / mediapipe.LLMCalculatorOptions]: {{
+      max_num_seqs: 256,
+      device: "{device}",
+      models_path: "./",
+      enable_prefix_caching: true,
+      cache_size: 0,
+    }}
+  }}
+  input_stream_handler {{
+    input_stream_handler: "SyncSetInputStreamHandler",
+    options {{ [mediapipe.SyncSetInputStreamHandlerOptions.ext] {{ sync_set {{ tag_index: "LOOPBACK:0" }} }} }}
+  }}
+}}
+'''
+
+
+def write_graph_pbtxt(out: Path, device: str = "GPU") -> None:
+    """OVMS serves an IR via a MediaPipe graph (graph.pbtxt). optimum doesn't emit
+    one, so self-converted IRs can't be served without it. models_path:"./" is
+    relative, so this graph is model-agnostic."""
+    gp = out / "graph.pbtxt"
+    gp.write_text(_GRAPH_PBTXT.format(device=device), encoding="utf-8")
+    log(f"  wrote graph.pbtxt (device={device})")
+
+
+def ensure_ovms_chat_template(out: Path) -> None:
+    """OVMS reads the chat template from the openvino_tokenizer IR's rt_info and
+    needs a `simplified_chat_template` entry. optimum only sets it for templates in
+    its hardcoded COMPLEX_CHAT_TEMPLATES list, so most self-converted IRs lack it
+    and OVMS /chat/completions fails. Set it via the OV API (text edits to the .xml
+    are ignored by the runtime). Best-effort: logs and continues on failure.
+
+    NOTE: this does NOT help models whose tokenizer OpenVINO GenAI can't process at
+    all (e.g. some tri-modal/omni tokenizers) — that's a GenAI runtime limitation."""
+    tok_xml = out / "openvino_tokenizer.xml"
+    if not tok_xml.is_file():
+        return
+    try:
+        import openvino as ov
+        import openvino_tokenizers as ot
+    except Exception as e:  # noqa: BLE001
+        log(f"  (skip chat-template finalize: {e})")
+        return
+    try:
+        core = ov.Core()
+        core.add_extension(ot._ext_path)
+        m = core.read_model(str(tok_xml))
+        template = _DEFAULT_CHATML
+        if m.has_rt_info("chat_template"):
+            template = m.get_rt_info("chat_template").value or _DEFAULT_CHATML
+        if m.has_rt_info("simplified_chat_template"):
+            log("  tokenizer already has simplified_chat_template")
+            return
+        m.set_rt_info(template, "simplified_chat_template")
+        # save to a temp path then replace (saving in-place ties to the source .bin)
+        tmp = out / "_tok_tmp.xml"
+        ov.save_model(m, str(tmp))
+        for ext in (".xml", ".bin"):
+            (out / f"_tok_tmp{ext}").replace(tok_xml.with_suffix(ext))
+        log("  set simplified_chat_template on tokenizer (OVMS chat-completions)")
+    except Exception as e:  # noqa: BLE001
+        log(f"  (chat-template finalize failed, non-fatal: {e})")
+
+
+def finalize_for_ovms(out: Path, device: str = "GPU") -> None:
+    """Post-process a text IR so OpenVINO Model Server can serve it directly."""
+    write_graph_pbtxt(out, device=device)
+    ensure_ovms_chat_template(out)
+
+
+# ----------------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------------
 
@@ -362,6 +456,9 @@ def main() -> int:
     ap.add_argument("--src-dir", help="reuse an already-downloaded source dir instead of downloading")
     ap.add_argument("--revision", help="HF revision/branch")
     ap.add_argument("--token", default=os.environ.get("HF_TOKEN"), help="HF token (or $HF_TOKEN); public models need none")
+    ap.add_argument("--no-ovms-finalize", action="store_true",
+                    help="skip writing graph.pbtxt + simplified_chat_template for OVMS serving")
+    ap.add_argument("--ovms-device", default="GPU", help="device in the OVMS graph.pbtxt (GPU/CPU/NPU)")
     ap.add_argument("--weight-format", default="int4")
     ap.add_argument("--ratio", type=float, default=1.0)
     ap.add_argument("--group-size", type=int, default=128)
@@ -440,6 +537,9 @@ def main() -> int:
                 ckpt = extract_text_decoder(src, work, args.trust_remote_code)
                 run_main_export(ckpt, out, "text-generation-with-past", q, args.trust_remote_code, bp)
             ok = True if args.no_validate else validate_ir(out)
+            # Make the text-serveable shapes directly loadable by OpenVINO Model Server.
+            if ok and sh in ("text", "decoder") and not args.no_ovms_finalize:
+                finalize_for_ovms(out, device=args.ovms_device)
             results[sh] = {"output": str(out), "valid": ok}
             log(f"shape '{sh}' -> {out} (valid={ok})")
         except Exception as e:  # noqa: BLE001
